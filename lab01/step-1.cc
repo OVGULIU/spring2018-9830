@@ -95,10 +95,34 @@ void second_grid ()
 }
 
 
+void fourth_grid()
+{
+  Triangulation<3> triangulation;
+
+  const double radius = 0.5,
+               halflength= 1.0;
+  GridGenerator::cylinder (triangulation, radius, halflength);
+  const CylindricalManifold<3> manifold_description(0);
+  triangulation.set_manifold (0, manifold_description);
+//  triangulation.set_all_manifold_ids(0);
+
+  triangulation.refine_global(4);
+
+
+  std::ofstream out ("grid-4.vtk");
+  GridOut grid_out;
+  grid_out.write_vtk (triangulation, out);
+
+  std::cout << "Grid written to grid-4.vtk" << std::endl;
+
+  triangulation.set_manifold (0);
+}
+
 
 
 int main ()
 {
   first_grid ();
   second_grid ();
+  fourth_grid ();
 }
