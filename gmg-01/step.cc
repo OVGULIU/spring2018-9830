@@ -52,7 +52,6 @@
 #include <deal.II/multigrid/mg_matrix.h>
 
 
-
 #include <fstream>
 #include <iostream>
 
@@ -66,7 +65,10 @@
 
 #include <deal.II/numerics/error_estimator.h>
 
+#include "compat.h"
+
 using namespace dealii;
+
 
 
 
@@ -92,7 +94,7 @@ private:
 
   FE_Q<dim>            fe;
   unsigned int         degree;
-  DoFHandler<dim>      mg_dof_handler;
+  DoFHandler<dim>      dof_handler;
 
   ConstraintMatrix     constraints;
 
@@ -131,7 +133,7 @@ MultigridStep6<dim>::MultigridStep6 (const unsigned int deg)
     triangulation(Triangulation<dim>::limit_level_difference_at_vertices),
     fe (deg),
     degree(deg),
-    mg_dof_handler (triangulation)
+    dof_handler (triangulation)
 {}
 
 
@@ -147,28 +149,28 @@ MultigridStep6<dim>::~MultigridStep6 ()
 template <int dim>
 void MultigridStep6<dim>::setup_system ()
 {
-  mg_dof_handler.distribute_dofs (fe);
-  mg_dof_handler.distribute_mg_dofs ();
+  dof_handler.distribute_dofs (fe);
+  dof_handler.distribute_mg_dofs (fe);
 
-  solution.reinit (mg_dof_handler.n_dofs());
-  system_rhs.reinit (mg_dof_handler.n_dofs());
+  solution.reinit (dof_handler.n_dofs());
+  system_rhs.reinit (dof_handler.n_dofs());
 
 
   constraints.clear ();
-  DoFTools::make_hanging_node_constraints (mg_dof_handler,
+  DoFTools::make_hanging_node_constraints (dof_handler,
                                            constraints);
 
 
-  VectorTools::interpolate_boundary_values (mg_dof_handler,
+  VectorTools::interpolate_boundary_values (dof_handler,
                                             0,
-                                            Functions::ZeroFunction<dim>(),
+                                            ZeroFunction<dim>(),
                                             constraints);
 
 
   constraints.close ();
 
-  DynamicSparsityPattern dsp(mg_dof_handler.n_dofs());
-  DoFTools::make_sparsity_pattern(mg_dof_handler,
+  DynamicSparsityPattern dsp(dof_handler.n_dofs());
+  DoFTools::make_sparsity_pattern(dof_handler,
                                   dsp,
                                   constraints,
                                   /*keep_constrained_dofs = */ false);
@@ -180,11 +182,11 @@ void MultigridStep6<dim>::setup_system ()
 
   // GMG Specific
   mg_constrained_dofs.clear();
-  mg_constrained_dofs.initialize(mg_dof_handler);
+  mg_constrained_dofs.initialize(dof_handler);
 
   std::set<types::boundary_id>  dirichlet_boundary_ids;
   dirichlet_boundary_ids.insert(0);
-  mg_constrained_dofs.make_zero_boundary_constraints(mg_dof_handler, dirichlet_boundary_ids);
+  mg_constrained_dofs.make_zero_boundary_constraints(dof_handler, dirichlet_boundary_ids);
 
   const unsigned int n_levels = triangulation.n_global_levels();
 
@@ -198,16 +200,16 @@ void MultigridStep6<dim>::setup_system ()
   for (unsigned int level=0; level<n_levels; ++level)
   {
     {
-      DynamicSparsityPattern dsp(mg_dof_handler.n_dofs(level),
-                                 mg_dof_handler.n_dofs(level));
-      MGTools::make_sparsity_pattern(mg_dof_handler, dsp, level);
+      DynamicSparsityPattern dsp(dof_handler.n_dofs(level),
+                                 dof_handler.n_dofs(level));
+      MGTools::make_sparsity_pattern(dof_handler, dsp, level);
       mg_sparsity_patterns[level].copy_from (dsp);
       mg_matrices[level].reinit(mg_sparsity_patterns[level]);
     }
     {
-      DynamicSparsityPattern dsp(mg_dof_handler.n_dofs(level),
-                                 mg_dof_handler.n_dofs(level));
-      MGTools::make_interface_sparsity_pattern(mg_dof_handler, mg_constrained_dofs, dsp, level);
+      DynamicSparsityPattern dsp(dof_handler.n_dofs(level),
+                                 dof_handler.n_dofs(level));
+      MGTools::make_interface_sparsity_pattern(dof_handler, mg_constrained_dofs, dsp, level);
       mg_interface_sparsity_patterns[level].copy_from(dsp);
       mg_interface_matrices[level].reinit(mg_interface_sparsity_patterns[level]);
     }
@@ -234,8 +236,8 @@ void MultigridStep6<dim>::assemble_system ()
   std::vector<types::global_dof_index> local_dof_indices (dofs_per_cell);
 
   typename DoFHandler<dim>::active_cell_iterator
-      cell = mg_dof_handler.begin_active(),
-      endc = mg_dof_handler.end();
+      cell = dof_handler.begin_active(),
+      endc = dof_handler.end();
   for (; cell!=endc; ++cell)
   {
     cell_matrix = 0;
@@ -280,7 +282,7 @@ void MultigridStep6<dim>::assemble_multigrid ()
   for (unsigned int level=0; level<triangulation.n_global_levels(); ++level)
   {
     IndexSet dofset;
-    DoFTools::extract_locally_relevant_level_dofs (mg_dof_handler, level, dofset);
+    DoFTools::extract_locally_relevant_level_dofs (dof_handler, level, dofset);
     boundary_constraints[level].reinit(dofset);
     boundary_constraints[level].add_lines (mg_constrained_dofs.get_refinement_edge_indices(level));
     boundary_constraints[level].add_lines (mg_constrained_dofs.get_boundary_indices(level));
@@ -304,8 +306,8 @@ void MultigridStep6<dim>::assemble_multigrid ()
 
   // iterate over all cells, not just active ones
   typename DoFHandler<dim>::cell_iterator
-      cell = mg_dof_handler.begin(),
-      endc = mg_dof_handler.end();
+      cell = dof_handler.begin(),
+      endc = dof_handler.end();
   for (; cell!=endc; ++cell)
   {
     const unsigned int level = cell->level();
@@ -334,7 +336,7 @@ void MultigridStep6<dim>::assemble_multigrid ()
     // Fill in interface matrices
     for (unsigned int i=0; i<dofs_per_cell; ++i)
       for (unsigned int j=0; j<dofs_per_cell; ++j)
-        if (mg_constrained_dofs.is_interface_matrix_entry(level, local_dof_indices[i], local_dof_indices[j]))
+        if (is_interface_matrix_entry(mg_constrained_dofs, level, local_dof_indices[i], local_dof_indices[j]))
           mg_interface_matrices[level].add(local_dof_indices[i],local_dof_indices[j],cell_matrix(i,j));
   }
 }
@@ -349,7 +351,7 @@ void MultigridStep6<dim>::solve ()
 
   // Build the transfer matrices
   MGTransferPrebuilt<Vector<double> > mg_transfer(mg_constrained_dofs);
-  mg_transfer.build_matrices(mg_dof_handler);
+  mg_transfer.build_matrices(dof_handler);
 
   // Create the coarse mesh solver
   SparseMatrix<double>  &coarse_matrix = mg_matrices[0];
@@ -362,7 +364,7 @@ void MultigridStep6<dim>::solve ()
   // Create the smoothers
   typedef PreconditionJacobi<SparseMatrix<double> > Smoother;
   MGSmootherPrecondition<SparseMatrix<double>, Smoother, Vector<double> > mg_smoother;
-  mg_smoother.initialize(mg_matrices, Smoother::AdditionalData(0.66667));
+  mg_smoother.initialize(mg_matrices, Smoother::AdditionalData(0.8));
   mg_smoother.set_steps(2);
 
   // Create the actual preconditioner
@@ -378,7 +380,7 @@ void MultigridStep6<dim>::solve ()
   mg.set_edge_matrices(mg_interface_out, mg_interface_in);
 
   PreconditionMG<dim, Vector<double>, MGTransferPrebuilt<Vector<double> > >
-      preconditioner(mg_dof_handler, mg, mg_transfer);
+      preconditioner(dof_handler, mg, mg_transfer);
 
   solver.solve (system_matrix, solution, system_rhs,
                 preconditioner);
@@ -394,7 +396,7 @@ void MultigridStep6<dim>::refine_grid ()
 {
   Vector<float> estimated_error_per_cell (triangulation.n_active_cells());
 
-  KellyErrorEstimator<dim>::estimate (mg_dof_handler,
+  KellyErrorEstimator<dim>::estimate (dof_handler,
                                       QGauss<dim-1>(degree+1),
                                       typename FunctionMap<dim>::type(),
                                       solution,
@@ -413,7 +415,7 @@ template <int dim>
 void MultigridStep6<dim>::output_results (const unsigned int cycle) const
 {
   DataOut<dim> data_out;
-  data_out.attach_dof_handler (mg_dof_handler);
+  data_out.attach_dof_handler (dof_handler);
   data_out.add_data_vector (solution, "solution");
   data_out.build_patches ();
   {
@@ -452,8 +454,8 @@ void MultigridStep6<dim>::run ()
     }
     else
     {
-      refine_grid ();
-      //triangulation.refine_global();
+      //refine_grid ();
+      triangulation.refine_global();
     }
 
 
@@ -464,7 +466,7 @@ void MultigridStep6<dim>::run ()
     setup_system ();
 
     std::cout << "   Number of degrees of freedom: "
-              << mg_dof_handler.n_dofs()
+              << dof_handler.n_dofs()
               << std::endl;
 
     assemble_system ();
